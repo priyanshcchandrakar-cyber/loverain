@@ -1,0 +1,364 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0" />
+<title>I Love You — Gyro Rain</title>
+<style>
+  :root{
+    --bg:#071022;
+    --accent:#ff4d6d;
+  }
+  html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+  body{
+    background: radial-gradient(ellipse at bottom, #10203a 0%, var(--bg) 60%);
+    overflow:hidden;
+    color:white;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #stage{
+    position:fixed;
+    inset:0;
+    pointer-events:auto;
+    touch-action:none;
+    overflow:hidden;
+  }
+  .center-message{
+    position:absolute;
+    left:50%;
+    top:50%;
+    transform:translate(-50%,-50%);
+    text-align:center;
+    z-index:5;
+    pointer-events:none;
+    user-select:none;
+  }
+  .center-message h1{
+    margin:0;
+    font-size:clamp(28px,6vw,68px);
+    letter-spacing:1px;
+    text-shadow:0 8px 40px rgba(0,0,0,0.7);
+  }
+  .center-message p{
+    margin-top:10px;
+    opacity:0.95;
+    font-size:clamp(14px,2.5vw,20px);
+  }
+  .small-note{
+    position:fixed;
+    left:50%;
+    bottom:12px;
+    transform:translateX(-50%);
+    font-size:12px;
+    color:#ffffffb0;
+    z-index:6;
+    user-select:none;
+    pointer-events:none;
+  }
+  .controls{
+    position:fixed;
+    right:12px;
+    bottom:12px;
+    z-index:6;
+    display:flex;
+    gap:8px;
+  }
+  .btn{
+    background:#ffffff12;
+    border:1px solid #ffffff22;
+    color:white;
+    padding:8px 12px;
+    border-radius:999px;
+    font-size:13px;
+    cursor:pointer;
+    backdrop-filter: blur(6px);
+  }
+  .particle{
+    position:absolute;
+    left:0;
+    top:0;
+    transform-origin:center;
+    will-change:transform,opacity;
+    white-space:nowrap;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    pointer-events:none;
+    user-select:none;
+    text-shadow:0 3px 8px rgba(0,0,0,0.5);
+  }
+  .heart{
+    font-size:1.1em;
+    display:inline-block;
+    transform-origin:center;
+    filter:drop-shadow(0 4px 10px rgba(0,0,0,0.45));
+  }
+  .msg{
+    font-weight:800;
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+    background-image:linear-gradient(90deg,#ffd1dc,#ff6a86);
+    font-size:14px;
+    letter-spacing:0.6px;
+  }
+  .sparkle{
+    position:absolute;
+    width:8px;height:8px;border-radius:50%;
+    background: radial-gradient(circle at 30% 30%,#fff, #ffd1d9 40%, transparent 60%);
+    opacity:0.9;
+    z-index:1;
+    pointer-events:none;
+  }
+</style>
+</head>
+<body>
+<div id="stage" aria-hidden="false"></div>
+
+<div class="center-message" aria-hidden="false">
+  <h1>I LOVE YOU 💖</h1>
+  <p>Rotate or tilt your phone — the hearts will surf the tilt like liquid. ❤️</p>
+</div>
+<div class="small-note">Tap the screen to pause/resume. Use "Make it Rain More" for a burst.</div>
+<div class="controls" aria-hidden="true">
+  <button class="btn" id="regen">Make it Rain More</button>
+  <button class="btn" id="clear">Clear</button>
+</div>
+
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  const phrases = ["I LOVE YOU SWEETHEART", "I LOVE YOU SONA"];
+  const allHearts = ["❤","❤️","🧡","💛","💚","💙","💜","🤎","🖤","🤍","💘","💝","💖","💗","💓","💞","💕","💟","❣️","💌"];
+  let particles = [];
+  let running = true;
+  const maxParticles = 140; // cap for performance
+  const spawnRate = 8; // approx drops/sec baseline
+  const device = { ax:0, ay:0 }; // acceleration vector derived from gyro (in px/s^2 units)
+  let lastTime = performance.now();
+  const bounds = { w: window.innerWidth, h: window.innerHeight };
+
+  // Particle constructor
+  function makeParticle(text){
+    const el = document.createElement('div');
+    el.className = 'particle';
+    const heart = document.createElement('span');
+    heart.className = 'heart';
+    heart.textContent = allHearts[Math.floor(Math.random()*allHearts.length)];
+    const msg = document.createElement('span');
+    msg.className = 'msg';
+    msg.textContent = text;
+    el.appendChild(heart);
+    el.appendChild(msg);
+    stage.appendChild(el);
+
+    const sizeFactor = 0.6 + Math.random()*1.6; // scale
+    const w = el.offsetWidth || 80;
+    const h = el.offsetHeight || 28;
+    const p = {
+      el,
+      x: Math.random() * bounds.w,
+      y: -30 - Math.random()*120,
+      vx: (Math.random()*40-20),
+      vy: (50 + Math.random()*80),
+      ax: 0,
+      ay: 0,
+      size: sizeFactor,
+      rotation: (Math.random()*60-30),
+      life: 0,
+      duration: 6 + Math.random()*6,
+      text,
+    };
+    // initial transform set
+    el.style.transform = `translate(${p.x}px, ${p.y}px) scale(${p.size}) rotate(${p.rotation}deg)`;
+    return p;
+  }
+
+  // spawn logic
+  function spawnBurst(count){
+    for(let i=0;i<count;i++){
+      if(particles.length >= maxParticles) break;
+      const ph = phrases[Math.floor(Math.random()*phrases.length)];
+      const p = makeParticle(ph);
+      // randomize starting x a bit
+      p.x = Math.random() * bounds.w;
+      p.y = -20 - Math.random()*120;
+      particles.push(p);
+    }
+  }
+
+  // regular spawn
+  let rainInterval = setInterval(()=>{
+    if(!running) return;
+    spawnBurst(1 + Math.floor(Math.random()*2));
+  }, Math.max(60, 1000/spawnRate));
+
+  // gyroscope / deviceorientation handling (maps tilt to acceleration)
+  function handleOrientation(e){
+    // e.gamma: left/right tilt [-90,90] (x-axis), e.beta: front/back [-180,180] (y-axis)
+    // We'll use gamma for horizontal, beta for vertical tilt influence.
+    const gamma = e.gamma || 0;
+    const beta = e.beta || 0;
+    // Map tilt to acceleration in px/s^2
+    // Tuned constants for a nice liquid feel:
+    const rangeScale = Math.min(1, Math.abs(gamma)/45 + Math.abs(beta)/90);
+    // Convert degrees to a smaller acceleration value:
+    device.ax = (gamma / 45) * 600; // horizontal push
+    device.ay = (beta  / 45) * -600; // invert so tilting forward moves particles downward visually
+  }
+
+  // fallback: pointer move for desktop to simulate tilt
+  let pointerSim = {x: bounds.w/2, y: bounds.h/2};
+  window.addEventListener('pointermove', (ev)=>{
+    pointerSim.x = ev.clientX;
+    pointerSim.y = ev.clientY;
+    // simulate a small acceleration toward pointer
+    const cx = (pointerSim.x - bounds.w/2) / (bounds.w/2); // -1..1
+    const cy = (pointerSim.y - bounds.h/2) / (bounds.h/2);
+    device.ax = cx * 400;
+    device.ay = cy * -400;
+  });
+
+  // Try to enable deviceorientation (iOS needs requestPermission)
+  function initDeviceOrientation(){
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      // iOS 13+
+      DeviceOrientationEvent.requestPermission().then((resp) => {
+        if(resp === 'granted'){
+          window.addEventListener('deviceorientation', handleOrientation, true);
+        } else {
+          // Not granted - fall back to pointer or default
+        }
+      }).catch(()=>{});
+    } else {
+      // other devices
+      window.addEventListener('deviceorientation', handleOrientation, true);
+    }
+  }
+
+  // Update loop: physics + rendering
+  function update(now){
+    const dt = Math.min(0.05, (now - lastTime)/1000); // clamp dt for stability
+    lastTime = now;
+
+    // apply device acceleration to each particle as external force (liquid inside container)
+    for(let i=particles.length-1;i>=0;i--){
+      const p = particles[i];
+      // acceleration from tilt + a tiny random noise
+      const ax = device.ax * (0.06 + (Math.random()*0.04));
+      const ay = device.ay * (0.06 + (Math.random()*0.04)) + 60; // gravity baseline downward
+
+      // simulate buoyancy: larger particles respond slightly slower
+      const mass = 1.0 / p.size;
+      p.vx += (ax * dt) * (1/mass);
+      p.vy += (ay * dt) * (1/mass);
+
+      // particle-particle soft interaction (simple separation) to create liquid feel
+      // We'll do a lightweight neighbor push for nearby particles
+      for(let j=0;j<5;j++){ // sample few random neighbors (cheap)
+        const idx = (i + 1 + Math.floor(Math.random()*Math.max(1,particles.length-1))) % Math.max(1,particles.length);
+        const q = particles[idx];
+        if(!q || q===p) continue;
+        const dx = q.x - p.x;
+        const dy = q.y - p.y;
+        const dist2 = dx*dx + dy*dy;
+        if(dist2 > 1 && dist2 < 2500){
+          const overlap = (50 - Math.sqrt(dist2)) * 0.002;
+          p.vx -= dx * overlap;
+          p.vy -= dy * overlap;
+        }
+      }
+
+      // damping to avoid runaway
+      p.vx *= 0.995;
+      p.vy *= 0.998;
+
+      // integrate
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life += dt;
+
+      // boundary collisions (soft bounce)
+      const bounce = 0.65;
+      if(p.x < -80){ p.x = -80; p.vx *= -bounce; }
+      if(p.x > bounds.w + 80){ p.x = bounds.w + 80; p.vx *= -bounce; }
+      if(p.y > bounds.h + 120){
+        // remove particle when off bottom to free DOM
+        p.el.remove();
+        particles.splice(i,1);
+        continue;
+      }
+
+      // render transform (include rotation and slight wobble)
+      const wobble = Math.sin(p.life*4 + p.x*0.01) * 8;
+      const rot = p.rotation + (p.vx*0.02);
+      p.el.style.transform = `translate(${p.x}px, ${p.y}px) scale(${p.size}) rotate(${rot + wobble}deg)`;
+      // fade in/out based on life/duration
+      const alpha = Math.max(0, Math.min(1, 1 - ((p.life - p.duration + 1)/1.2)));
+      p.el.style.opacity = alpha;
+    }
+
+    // Occasionally add sparkles for vibe
+    if(Math.random() < 0.06){
+      const s = document.createElement('div');
+      s.className = 'sparkle';
+      s.style.left = (Math.random()*100) + '%';
+      s.style.top = (10 + Math.random()*40) + '%';
+      stage.appendChild(s);
+      setTimeout(()=> s.remove(), 1200 + Math.random()*1000);
+    }
+
+    requestAnimationFrame(update);
+  }
+
+  // Controls
+  document.getElementById('regen').addEventListener('click', ()=>{
+    spawnBurst(24);
+  });
+  document.getElementById('clear').addEventListener('click', ()=>{
+    for(const p of particles) p.el.remove();
+    particles = [];
+  });
+
+  // Pause/resume on tap
+  window.addEventListener('pointerdown', ()=>{ running = !running; document.querySelector('.small-note').textContent = running ? 'Tap the screen to pause/resume.' : 'Paused — tap to resume.'; });
+
+  // Resize handler
+  window.addEventListener('resize', ()=>{
+    bounds.w = window.innerWidth;
+    bounds.h = window.innerHeight;
+  });
+
+  // initial burst to look pretty
+  spawnBurst(28);
+
+  // fill to reasonable amount for initial look
+  for(let i=0;i<10;i++) spawnBurst(2);
+
+  // start the RAF loop
+  lastTime = performance.now();
+  requestAnimationFrame(update);
+
+  // init gyro (ask permission on iOS)
+  initDeviceOrientation();
+
+  // Also allow a long-press "Make it Rain More" via space key
+  window.addEventListener('keydown', (e)=>{ if(e.code === 'Space') spawnBurst(28); });
+
+  // limit DOM if user has many particles
+  setInterval(()=>{
+    if(particles.length > maxParticles){
+      // remove oldest ones
+      const removeCount = particles.length - maxParticles;
+      for(let i=0;i<removeCount;i++){
+        const p = particles.shift();
+        if(p && p.el) p.el.remove();
+      }
+    }
+  }, 700);
+
+})();
+</script>
+</body>
+</html>
